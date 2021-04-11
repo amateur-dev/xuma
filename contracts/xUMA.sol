@@ -1,6 +1,5 @@
 pragma solidity 0.6.2;
 
-
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -32,10 +31,15 @@ interface IumaVoting {
         bytes32 hash
     ) public virtual;
 
-    // batchCommit
-    function batchCommit(
-        CommitmentAncillary[] memory commits
-    ) external;
+/**
+     * @notice Submit a batch of commits in a single transaction.
+     * @dev Using `encryptedVote` is optional. If included then commitment is stored on chain.
+     * Look at `project-root/common/Constants.js` for the tested maximum number of
+     * commitments that can fit in one transaction.
+     * @param commits array of structs that encapsulate an `identifier`, `time`, `hash` and optional `encryptedVote`.
+     */
+    function batchCommit(CommitmentAncillary[] memory commits) external;
+
     // batchReveal
     function batchReveal(
         RevealAncillary[] memory reveals
@@ -45,7 +49,7 @@ interface IumaVoting {
         address voterAddress,
         uint256 roundId,
         PendingRequestAncillary[] memory toRetrieve
-    ) external returns (FixedPoint.Unsigned memory totalRewardToIssue) 
+    ) external returns (FixedPoint.Unsigned memory totalRewardToIssue);
 
 }
 
