@@ -92,13 +92,10 @@ contract xUMA is ERC20, Pausable, Ownable {
      */
     function mint(uint256 minRate) public payable whenNotPaused {
         require(msg.value > 0, "Must send ETH");
-        // TODO: TO WORK ON THE getFundBalances FX
-        (uint256 stakedBalance, uint256 bufferBalance) = getFundBalances();
-
+        uint256 umaBalance = getFundBalances();
         uint256 fee = _calculateFee(msg.value, feeDivisors.mintFee);
-
         uint256 incrementalUma = kyberProxy.swapEtherToToken.value(msg.value.sub(fee))(ERC20(address(uma)), minRate);
-        return _mintInternal(bufferBalance, stakedBalance, incrementalUma);
+        return _mintInternal(umaBalance, incrementalUma);
     }
 
     /*
@@ -109,37 +106,27 @@ contract xUMA is ERC20, Pausable, Ownable {
      */
     function mintWithUmaToken(uint256 umaAmount, address affiliate) public whenNotPaused {
         require(umaAmount > 0, "Must send uma");
-        // TODO: TO WORK ON THE getFundBalances FX
-        (uint256 stakedBalance, uint256 bufferBalance) = getFundBalances();
-
+        uint256 umaBalance = getFundBalances();
         uma.safeTransferFrom(msg.sender, address(this), umaAmount);
-
         uint256 fee = _calculateFee(umaAmount, feeDivisors.mintFee);
-
         if (affiliate != address(0)) {
             require(whitelist[affiliate], "Invalid address");
-
             uint256 affiliateFee = fee.div(AFFILIATE_FEE_DIVISOR);
             uma.safeTransfer(affiliate, affiliateFee);
             _incrementWithdrawableumaFees(fee.sub(affiliateFee));
+            uint256 incrementalUma = (umaAmount.sub(fee)).sub(affiliateFee);
+            return _mintInternal(umaBalance, incrementalUma);
         }
-
         uint256 incrementalUma = umaAmount.sub(fee);
-        return _mintInternal(bufferBalance, stakedBalance, incrementalUma);
+        return _mintInternal(umaBalance, incrementalUma);
     }
 
     function _mintInternal(
-        uint256 _bufferBalance,
-        uint256 _stakedBalance,
+        uint256 _umaBalance,
         uint256 _incrementalUma
     ) internal {
         uint256 totalSupply = totalSupply();
-        uint256 allocationToStake =
-            _calculateAllocationToStake(_bufferBalance, _incrementalUma, _stakedBalance, totalSupply);
-        _stake(allocationToStake);
-
-        uint256 umaHoldings = _bufferBalance.add(_stakedBalance);
-        uint256 mintAmount = calculateMintAmount(_incrementalUma, umaHoldings, totalSupply);
+        uint256 mintAmount = calculateMintAmount(_umaBalance, totalSupply);
         return super._mint(msg.sender, mintAmount);
     }
 
@@ -157,11 +144,10 @@ contract xUMA is ERC20, Pausable, Ownable {
     ) public {
         require(tokenAmount > 0, "Must send xuma");
 
-        (uint256 stakedBalance, uint256 bufferBalance) = getFundBalances();
-        uint256 umaHoldings = bufferBalance.add(stakedBalance);
-        uint256 proRatauma = umaHoldings.mul(tokenAmount).div(totalSupply());
+        uint256 umaBalance = getFundBalances();
+        uint256 proRatauma = umaBalance.mul(tokenAmount).div(totalSupply());
 
-        require(proRatauma <= bufferBalance, "Insufficient exit liquidity");
+        require(proRatauma <= umaBalance, "Insufficient exit liquidity");
         super._burn(msg.sender, tokenAmount);
 
         if (redeemForEth) {
@@ -184,9 +170,6 @@ contract xUMA is ERC20, Pausable, Ownable {
         return uma.balanceOf(address(this)).sub(withdrawableumaFees);
     }
 
-    // function getStakedBalance() public view returns (uint256) {
-    //     return IERC20(address(stakeduma)).balanceOf(address(this));
-    // }
 
     //TODO: may be not have this function, but have the getFundHoldings;
     //TODO: or considering that all of the xtokens may have 2 separate functions getFundHoldings and getFundBalances, we can and should have boths?
@@ -200,6 +183,7 @@ contract xUMA is ERC20, Pausable, Ownable {
      * @param umaHoldingsBefore: xuma buffer reserve + staked balance
      * @param totalSupply: xuma.totalSupply()
      */
+     //TODO: dipesh to refactor the calculateMintAmount
     function calculateMintAmount(
         uint256 incrementalUma,
         uint256 umaHoldingsBefore,
