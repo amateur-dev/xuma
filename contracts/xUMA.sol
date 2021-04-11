@@ -8,56 +8,11 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import "./helpers/Pausable.sol";
-
-// create the voting interface for UMA
-// this will be the batchCommit function
-
-interface IumaVoting {
-    /**
-     * @notice Commit a vote for a price request for `identifier` at `time`.
-     * @dev `identifier`, `time` must correspond to a price request that's currently in the commit phase.
-     * Commits can be changed.
-     * @dev Since transaction data is public, the salt will be revealed with the vote. While this is the system’s expected behavior,
-     * voters should never reuse salts. If someone else is able to guess the voted price and knows that a salt will be reused, then
-     * they can determine the vote pre-reveal.
-     * @param identifier uniquely identifies the committed vote. EG BTC/USD price pair.
-     * @param time unix timestamp of the price being voted on.
-     * @param hash keccak256 hash of the `price`, `salt`, voter `address`, `time`, current `roundId`, and `identifier`.
-     */
-    function commitVote(
-        bytes32 identifier,
-        uint256 time,
-        bytes memory ancillaryData,
-        bytes32 hash
-    ) public virtual;
-
-/**
-     * @notice Submit a batch of commits in a single transaction.
-     * @dev Using `encryptedVote` is optional. If included then commitment is stored on chain.
-     * Look at `project-root/common/Constants.js` for the tested maximum number of
-     * commitments that can fit in one transaction.
-     * @param commits array of structs that encapsulate an `identifier`, `time`, `hash` and optional `encryptedVote`.
-     */
-    function batchCommit(CommitmentAncillary[] memory commits) external;
-
-    // batchReveal
-    function batchReveal(
-        RevealAncillary[] memory reveals
-    ) external;
-    // claimRewards
-    function retrieveRewards(
-        address voterAddress,
-        uint256 roundId,
-        PendingRequestAncillary[] memory toRetrieve
-    ) external returns (FixedPoint.Unsigned memory totalRewardToIssue);
-
-}
+//TODO: as of now this is an abstractContract; to update this to only use interface
+import "./helpers/VotingInterface.sol";
 
 interface IKyberNetworkProxy {
-    function swapEtherToToken(ERC20 token, uint256 minConversionRate)
-        external
-        payable
-        returns (uint256);
+    function swapEtherToToken(ERC20 token, uint256 minConversionRate) external payable returns (uint256);
 
     function swapTokenToToken(
         ERC20 src,
@@ -73,56 +28,32 @@ interface IKyberNetworkProxy {
     ) external payable returns (uint256);
 }
 
-
 contract xUMA is ERC20, Pausable, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
     uint256 private constant DEC_18 = 1e18;
     uint256 private constant MAX_UINT = 2**256 - 1;
-//    uint256 private constant uma_BUFFER_TARGET = 20; // 5% target
-//    uint256 private constant INITIAL_SUPPLY_MULTIPLIER = 100;
-//    uint256 public constant LIQUIDATION_TIME_PERIOD = 4 weeks;
+    //    uint256 private constant uma_BUFFER_TARGET = 20; // 5% target
+    //    uint256 private constant INITIAL_SUPPLY_MULTIPLIER = 100;
+    //    uint256 public constant LIQUIDATION_TIME_PERIOD = 4 weeks;
 
     uint256 public withdrawableumaFees;
     uint256 public adminActiveTimestamp;
 
     address private manager;
 
-    // IERC20 private uma; // CREATING A VARIABLE OF THE TYPE IERC0 WITH THE NAME uma;
-    IERC20 private uma;
-    // IERC20 private votinguma; // CREATING ANOTHER TOKEN VOTINGuma;
-    // IStakeduma private stakeduma;  // USING FROM THE INTERFACE ABOVE
-    IumaProtoGovernance private governance;  // USING FROM THE INTERFACE ABOVE
+    // @notice saving the following as constant varaible to save gas deployment cost
+    // @dev all of the following are mainnet address
+    // @dev change the address if not deploying to mainnet
+    IERC20 public constant uma = IERC20(0x04Fa0d235C4abf4BcF4787aF4CF447DE572eF828);
+    VotingInterface public constant umaVotingInterface = VotingInterface(0x8b1631ab830d11531ae83725fda4d86012eccd77);
+    IKyberNetworkProxy public constant kyberProxy = IKyberNetworkProxy(0x9AAb3f75489902f3a48495025729a0AF77d4b11e);
 
-    IKyberNetworkProxy private kyberProxy;  // USING FROM THE INTERFACE ABOVE
-
-    bool public cooldownActivated;  // RELEVANT TO uma MAYBE
+    bool public cooldownActivated;
 
     string public mandate;
 
-    // Captures the necessary data for making a commitment.
-    // Used as a parameter when making batch commitments.
-    // Not used as a data structure for storage.
-    struct CommitmentAncillary {
-        bytes32 identifier;
-        uint256 time;
-        bytes ancillaryData;
-        bytes32 hash;
-        bytes encryptedVote;
-    }
-    
-    // Captures the necessary data for revealing a vote.
-    // Used as a parameter when making batch reveals.
-    // Not used as a data structure for storage.
-    struct RevealAncillary {
-        bytes32 identifier;
-        uint256 time;
-        int256 price;
-        bytes ancillaryData;
-        int256 salt;
-    }
-    
     struct FeeDivisors {
         uint256 mintFee;
         uint256 burnFee;
@@ -131,39 +62,22 @@ contract xUMA is ERC20, Pausable, Ownable {
 
     FeeDivisors public feeDivisors;
 
-    IumaGovernanceV2 private governanceV2;
-
     address private manager2;
 
     mapping(address => bool) private whitelist;
 
     uint256 private constant AFFILIATE_FEE_DIVISOR = 4;
 
-
-    // CONSTRUCTOR FUNCTION MODIFIED SO THAT IT CAN BE UPGRADED TO WORK ON THIS
     function initialize(
-        IERC20 _uma, // ASSIGNING ADDRESS OVER HERE
-        IERC20 _votinguma, // ASSIGNING ADDRESS OVER HERE
-        // IStakeduma _stakeduma, // FROM THE STATE VARIABLES
-        IumaProtoGovernance _governance, // FROM THE STATE VARIABLES
-        IKyberNetworkProxy _kyberProxy, // FROM THE STATE VARIABLES
-        uint256 _mintFeeDivisor, // A UINT
-        uint256 _burnFeeDivisor, // A UINT
-        uint256 _claimFeeDivisor, // A UINT
+        uint256 _mintFeeDivisor, 
+        uint256 _burnFeeDivisor, 
+        uint256 _claimFeeDivisor,
         string memory _symbol,
-        string memory _mandate  // THIS IS A STRING // NEED TO CHECK WHAT IS THIS
+        string memory _mandate
     ) public initializer {
         __Ownable_init();
         __ERC20_init("xUMA", _symbol);
-
-        uma = _uma;
-        votinguma = _votinguma;
-        // stakeduma = _stakeduma;
-        governance = _governance;
-        kyberProxy = _kyberProxy;
         mandate = _mandate;
-
-        // WHY CALLING A FUNCTION?
         _setFeeDivisors(_mintFeeDivisor, _burnFeeDivisor, _claimFeeDivisor);
         _updateAdminActiveTimestamp();
     }
@@ -183,9 +97,7 @@ contract xUMA is ERC20, Pausable, Ownable {
 
         uint256 fee = _calculateFee(msg.value, feeDivisors.mintFee);
 
-        uint256 incrementalUma = kyberProxy.swapEtherToToken.value(
-            msg.value.sub(fee)
-        )(ERC20(address(uma)), minRate);
+        uint256 incrementalUma = kyberProxy.swapEtherToToken.value(msg.value.sub(fee))(ERC20(address(uma)), minRate);
         return _mintInternal(bufferBalance, stakedBalance, incrementalUma);
     }
 
@@ -195,10 +107,7 @@ contract xUMA is ERC20, Pausable, Ownable {
      * @param umaAmount: uma to contribute
      * @param affiliate: optional recipient of 25% of fees
      */
-    function mintWithUmaToken(uint256 umaAmount, address affiliate)
-        public
-        whenNotPaused
-    {
+    function mintWithUmaToken(uint256 umaAmount, address affiliate) public whenNotPaused {
         require(umaAmount > 0, "Must send uma");
         // TODO: TO WORK ON THE getFundBalances FX
         (uint256 stakedBalance, uint256 bufferBalance) = getFundBalances();
@@ -225,20 +134,12 @@ contract xUMA is ERC20, Pausable, Ownable {
         uint256 _incrementalUma
     ) internal {
         uint256 totalSupply = totalSupply();
-        uint256 allocationToStake = _calculateAllocationToStake(
-            _bufferBalance,
-            _incrementalUma,
-            _stakedBalance,
-            totalSupply
-        );
+        uint256 allocationToStake =
+            _calculateAllocationToStake(_bufferBalance, _incrementalUma, _stakedBalance, totalSupply);
         _stake(allocationToStake);
 
         uint256 umaHoldings = _bufferBalance.add(_stakedBalance);
-        uint256 mintAmount = calculateMintAmount(
-            _incrementalUma,
-            umaHoldings,
-            totalSupply
-        );
+        uint256 mintAmount = calculateMintAmount(_incrementalUma, umaHoldings, totalSupply);
         return super._mint(msg.sender, mintAmount);
     }
 
@@ -264,18 +165,9 @@ contract xUMA is ERC20, Pausable, Ownable {
         super._burn(msg.sender, tokenAmount);
 
         if (redeemForEth) {
-            uint256 ethRedemptionValue = kyberProxy.swapTokenToEther(
-                ERC20(address(uma)),
-                proRatauma,
-                minRate
-            );
-            uint256 fee = _calculateFee(
-                ethRedemptionValue,
-                feeDivisors.burnFee
-            );
-            (bool success, ) = msg.sender.call.value(
-                ethRedemptionValue.sub(fee)
-            )("");
+            uint256 ethRedemptionValue = kyberProxy.swapTokenToEther(ERC20(address(uma)), proRatauma, minRate);
+            uint256 fee = _calculateFee(ethRedemptionValue, feeDivisors.burnFee);
+            (bool success, ) = msg.sender.call.value(ethRedemptionValue.sub(fee))("");
             require(success, "Transfer failed");
         } else {
             uint256 fee = _calculateFee(proRatauma, feeDivisors.burnFee);
@@ -313,8 +205,7 @@ contract xUMA is ERC20, Pausable, Ownable {
         uint256 umaHoldingsBefore,
         uint256 totalSupply
     ) public view returns (uint256 mintAmount) {
-        if (totalSupply == 0)
-            return incrementalUma.mul(INITIAL_SUPPLY_MULTIPLIER);
+        if (totalSupply == 0) return incrementalUma.mul(INITIAL_SUPPLY_MULTIPLIER);
 
         mintAmount = (incrementalUma).mul(totalSupply).div(umaHoldingsBefore);
     }
@@ -330,9 +221,7 @@ contract xUMA is ERC20, Pausable, Ownable {
         uint256 _incrementalUma,
         uint256 _totalSupply
     ) internal view returns (uint256) {
-        if (_totalSupply == 0)
-            return
-                _incrementalUma.sub(_incrementalUma.div(uma_BUFFER_TARGET));
+        if (_totalSupply == 0) return _incrementalUma.sub(_incrementalUma.div(uma_BUFFER_TARGET));
 
         uint256 bufferBalanceAfter = _bufferBalanceBefore.add(_incrementalUma);
         uint256 umaHoldings = bufferBalanceAfter;
@@ -418,10 +307,7 @@ contract xUMA is ERC20, Pausable, Ownable {
      * @param _proposalId:
      * @param _vote:
      */
-    function vote(uint256 _proposalId, uint256 _vote)
-        public
-        onlyOwnerOrManager
-    {
+    function vote(uint256 _proposalId, uint256 _vote) public onlyOwnerOrManager {
         governance.submitVoteByVoter(_proposalId, _vote, votinguma);
     }
 
@@ -431,26 +317,18 @@ contract xUMA is ERC20, Pausable, Ownable {
      * @param tokens: Addresses of non-uma tokens with balance in xuma
      * @param minReturns: Kyber.getExpectedRate for non-uma tokens
      */
-    function convertTokensToTarget(
-        address[] calldata tokens,
-        uint256[] calldata minReturns
-    ) external onlyOwnerOrManager {
+    function convertTokensToTarget(address[] calldata tokens, uint256[] calldata minReturns)
+        external
+        onlyOwnerOrManager
+    {
         for (uint256 i = 0; i < tokens.length; i++) {
             uint256 tokenBal = IERC20(tokens[i]).balanceOf(address(this));
             uint256 bufferBalancerBefore = getBufferBalance();
 
-            kyberProxy.swapTokenToToken(
-                ERC20(tokens[i]),
-                tokenBal,
-                ERC20(address(uma)),
-                minReturns[i]
-            );
+            kyberProxy.swapTokenToToken(ERC20(tokens[i]), tokenBal, ERC20(address(uma)), minReturns[i]);
             uint256 bufferBalanceAfter = getBufferBalance();
 
-            uint256 fee = _calculateFee(
-                bufferBalanceAfter.sub(bufferBalancerBefore),
-                feeDivisors.claimFee
-            );
+            uint256 fee = _calculateFee(bufferBalanceAfter.sub(bufferBalancerBefore), feeDivisors.claimFee);
             _incrementWithdrawableumaFees(fee);
         }
     }
@@ -464,10 +342,7 @@ contract xUMA is ERC20, Pausable, Ownable {
      * admin functions unlock to public
      */
     modifier liquidationTimeElapsed {
-        require(
-            block.timestamp > adminActiveTimestamp.add(LIQUIDATION_TIME_PERIOD),
-            "Liquidation time hasn't elapsed"
-        );
+        require(block.timestamp > adminActiveTimestamp.add(LIQUIDATION_TIME_PERIOD), "Liquidation time hasn't elapsed");
         _;
     }
 
@@ -522,11 +397,7 @@ contract xUMA is ERC20, Pausable, Ownable {
     /*                                         Fee Logic                                         */
     /* ========================================================================================= */
 
-    function _calculateFee(uint256 _value, uint256 _feeDivisor)
-        internal
-        pure
-        returns (uint256 fee)
-    {
+    function _calculateFee(uint256 _value, uint256 _feeDivisor) internal pure returns (uint256 fee) {
         if (_feeDivisor > 0) {
             fee = _value.div(_feeDivisor);
         }
@@ -631,12 +502,7 @@ contract xUMA is ERC20, Pausable, Ownable {
     }
 
     modifier onlyOwnerOrManager {
-        require(
-            msg.sender == owner() ||
-                msg.sender == manager ||
-                msg.sender == manager2,
-            "Non-admin caller"
-        );
+        require(msg.sender == owner() || msg.sender == manager || msg.sender == manager2, "Non-admin caller");
         _;
     }
 
@@ -650,20 +516,14 @@ contract xUMA is ERC20, Pausable, Ownable {
     // }
 
     // TODO: to check if this function is needed
-    function setGovernanceV2Address(IumaGovernanceV2 _governanceV2)
-        public
-        onlyOwner
-    {
+    function setGovernanceV2Address(IumaGovernanceV2 _governanceV2) public onlyOwner {
         if (address(governanceV2) == address(0)) {
             governanceV2 = _governanceV2;
         }
     }
 
     // TODO: to check if this function is needed
-    function voteV2(uint256 proposalId, bool support)
-        public
-        onlyOwnerOrManager
-    {
+    function voteV2(uint256 proposalId, bool support) public onlyOwnerOrManager {
         governanceV2.submitVote(proposalId, support);
     }
 
