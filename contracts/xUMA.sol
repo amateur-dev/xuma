@@ -34,6 +34,7 @@ contract xUMA is ERC20, Pausable, Ownable {
 
     uint256 private constant DEC_18 = 1e18;
     uint256 private constant MAX_UINT = 2**256 - 1;
+
     //    uint256 private constant uma_BUFFER_TARGET = 20; // 5% target
     //    uint256 private constant INITIAL_SUPPLY_MULTIPLIER = 100;
     //    uint256 public constant LIQUIDATION_TIME_PERIOD = 4 weeks;
@@ -43,9 +44,9 @@ contract xUMA is ERC20, Pausable, Ownable {
 
     address private manager;
 
-    // @notice saving the following as constant varaible to save gas deployment cost
-    // @dev all of the following are mainnet address
-    // @dev change the address if not deploying to mainnet
+    /// @notice saving the following as constant varaible to save gas deployment cost
+    /// @dev all of the following are mainnet addresses
+    /// @dev change the addresses if not deploying to mainnet
     IERC20 public constant uma = IERC20(0x04Fa0d235C4abf4BcF4787aF4CF447DE572eF828);
     VotingInterface public constant umaVotingInterface = VotingInterface(0x8b1631ab830d11531ae83725fda4d86012eccd77);
     IKyberNetworkProxy public constant kyberProxy = IKyberNetworkProxy(0x9AAb3f75489902f3a48495025729a0AF77d4b11e);
@@ -54,6 +55,7 @@ contract xUMA is ERC20, Pausable, Ownable {
 
     string public mandate;
 
+    /// @dipesh to evaluate if the struct variables can be reduced from uint256 to a lesser space uint
     struct FeeDivisors {
         uint256 mintFee;
         uint256 burnFee;
@@ -86,37 +88,34 @@ contract xUMA is ERC20, Pausable, Ownable {
     /*                                        Investor-Facing                                    */
     /* ========================================================================================= */
 
-    /*
-     * @dev Mint xUMA using ETH
-     * @param minRate: Kyber min rate ETH=>uma
-     */
+    
+    /// @dev Mint xUMA using ETH
+    /// @param minRate: Kyber min rate ETH=>uma
     function mint(uint256 minRate) public payable whenNotPaused {
         require(msg.value > 0, "Must send ETH");
-        uint256 umaBalance = getFundBalances();
+        uint256 umaBalance = this.getFundBalances();
         uint256 fee = _calculateFee(msg.value, feeDivisors.mintFee);
-        uint256 incrementalUma = kyberProxy.swapEtherToToken.value(msg.value.sub(fee))(ERC20(address(uma)), minRate);
+        uint256 incrementalUma = kyberProxy.swapEtherToToken.value(msg.value.sub(fee))(ERC20(uma), minRate);
         return _mintInternal(umaBalance, incrementalUma);
     }
 
-    /*
-     * @dev Mint xuma using uma
-     * @notice Must run ERC20 approval first
-     * @param umaAmount: uma to contribute
-     * @param affiliate: optional recipient of 25% of fees
-     */
+    /// @notice Must run ERC20 approval first
+    /// @dev Mint xuma using uma
+    /// @param umaAmount: uma to contribute
+    /// @param affiliate: optional recipient of 25% of fees
     function mintWithUmaToken(uint256 umaAmount, address affiliate) public whenNotPaused {
         require(umaAmount > 0, "Must send uma");
-        uint256 umaBalance = getFundBalances();
+        uint256 umaBalance = this.getFundBalances();
         uma.safeTransferFrom(msg.sender, address(this), umaAmount);
         uint256 fee = _calculateFee(umaAmount, feeDivisors.mintFee);
-        if (affiliate != address(0)) {
-            require(whitelist[affiliate], "Invalid address");
+        if (require(whitelist[affiliate], "Invalid address")) {
             uint256 affiliateFee = fee.div(AFFILIATE_FEE_DIVISOR);
             uma.safeTransfer(affiliate, affiliateFee);
             _incrementWithdrawableumaFees(fee.sub(affiliateFee));
             uint256 incrementalUma = (umaAmount.sub(fee)).sub(affiliateFee);
             return _mintInternal(umaBalance, incrementalUma);
         }
+        _incrementWithdrawableumaFees(fee);
         uint256 incrementalUma = umaAmount.sub(fee);
         return _mintInternal(umaBalance, incrementalUma);
     }
@@ -125,18 +124,18 @@ contract xUMA is ERC20, Pausable, Ownable {
         uint256 _umaBalance,
         uint256 _incrementalUma
     ) internal {
-        uint256 totalSupply = totalSupply();
-        uint256 mintAmount = calculateMintAmount(_umaBalance, totalSupply);
+        uint256 mintAmount = calculateMintAmount(
+            _incrementalUma,
+            _umaBalance
+            );
         return super._mint(msg.sender, mintAmount);
     }
 
-    /*
-     * @dev Burn xuma tokens
-     * @notice Will fail if redemption value exceeds available liquidity
-     * @param redeemAmount: xuma to redeem
-     * @param redeemForEth: if true, redeem xuma for ETH
-     * @param minRate: Kyber.getExpectedRate uma=>ETH if redeemForEth true (no-op if false)
-     */
+    /// @notice Burn xUMA tokens
+    /// @dev Will fail if redemption value exceeds available liquidity
+    /// @param tokenAmount: xuma to redeem
+    /// @param redeemForEth: if true, redeem xuma for ETH
+    /// @param minRate: Kyber.getExpectedRate uma=>ETH if redeemForEth true (no-op if false)
     function burn(
         uint256 tokenAmount,
         bool redeemForEth,
@@ -166,32 +165,28 @@ contract xUMA is ERC20, Pausable, Ownable {
     /*                                             NAV                                           */
     /* ========================================================================================= */
 
-    function getFundHoldings() public view returns (uint256) {
+    function getFundHoldings() external view returns (uint256) {
         return uma.balanceOf(address(this)).sub(withdrawableumaFees);
     }
 
 
-    //TODO: may be not have this function, but have the getFundHoldings;
     //TODO: or considering that all of the xtokens may have 2 separate functions getFundHoldings and getFundBalances, we can and should have boths?
-    function getFundBalances() public view returns (uint256) {
-        return (getFundHoldings());
+    function getFundBalances() external view returns (uint256) {
+        return (this.getFundHoldings());
     }
 
-    /*
-     * @dev Helper function for mint, mintWithUmaToken
-     * @param incrementalUma: uma contributed
-     * @param umaHoldingsBefore: xuma buffer reserve + staked balance
-     * @param totalSupply: xuma.totalSupply()
-     */
-     //TODO: dipesh to refactor the calculateMintAmount
+    /// @notice Explain to an end user what this does
+    /// @dev Helper function for mint, mintWithUmaToken
+    /// @param incrementalUma: uma contributed
+    /// @param umaHoldingsBefore: xuma buffer reserve + staked balance
+    /// @param totalSupply: _totalSupply 
+    
     function calculateMintAmount(
         uint256 incrementalUma,
-        uint256 umaHoldingsBefore,
-        uint256 totalSupply
+        uint256 umaHoldingsBefore
     ) public view returns (uint256 mintAmount) {
-        if (totalSupply == 0) return incrementalUma.mul(INITIAL_SUPPLY_MULTIPLIER);
-
-        mintAmount = (incrementalUma).mul(totalSupply).div(umaHoldingsBefore);
+        if (_totalSupply == 0) return incrementalUma.mul(INITIAL_SUPPLY_MULTIPLIER);
+        mintAmount = (incrementalUma).mul(_totalSupply).div(umaHoldingsBefore);
     }
 
     /*
