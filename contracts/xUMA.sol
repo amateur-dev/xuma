@@ -144,13 +144,13 @@ contract xUMA is ERC20, Pausable, Ownable {
         require(tokenAmount > 0, "Must send xuma");
 
         uint256 umaBalance = getFundBalances();
-        uint256 proRatauma = umaBalance.mul(tokenAmount).div(totalSupply());
+        uint256 proRatauma = umaBalance.mul(tokenAmount).div(_totalSupply);
 
         require(proRatauma <= umaBalance, "Insufficient exit liquidity");
         super._burn(msg.sender, tokenAmount);
 
         if (redeemForEth) {
-            uint256 ethRedemptionValue = kyberProxy.swapTokenToEther(ERC20(address(uma)), proRatauma, minRate);
+            uint256 ethRedemptionValue = kyberProxy.swapTokenToEther(ERC20(uma), proRatauma, minRate);
             uint256 fee = _calculateFee(ethRedemptionValue, feeDivisors.burnFee);
             (bool success, ) = msg.sender.call.value(ethRedemptionValue.sub(fee))("");
             require(success, "Transfer failed");
@@ -189,43 +189,9 @@ contract xUMA is ERC20, Pausable, Ownable {
         mintAmount = (incrementalUma).mul(_totalSupply).div(umaHoldingsBefore);
     }
 
-    /*
-     * @dev Helper function for mint, mintWithUmaToken
-     * @param _bufferBalanceBefore: xuma uma buffer balance pre-mint
-     * @param _incrementalUma: uma contributed
-     * @param _totalSupply: xuma.totalSupply()
-     */
-    function _calculateAllocationToStake(
-        uint256 _bufferBalanceBefore,
-        uint256 _incrementalUma,
-        uint256 _totalSupply
-    ) internal view returns (uint256) {
-        if (_totalSupply == 0) return _incrementalUma.sub(_incrementalUma.div(uma_BUFFER_TARGET));
-
-        uint256 bufferBalanceAfter = _bufferBalanceBefore.add(_incrementalUma);
-        uint256 umaHoldings = bufferBalanceAfter;
-
-        uint256 targetBufferBalance = umaHoldings.div(uma_BUFFER_TARGET);
-
-        // allocate full incremental uma to buffer balance
-        if (bufferBalanceAfter < targetBufferBalance) return 0;
-
-        return bufferBalanceAfter.sub(targetBufferBalance);
-    }
-
     /* ========================================================================================= */
     /*                                   Fund Management - Admin                                 */
     /* ========================================================================================= */
-
-    /*
-     * @notice xuma only stakes when cooldown is not active
-     * @param _amount: allocation to staked balance
-     */
-    // function _stake(uint256 _amount) private {
-    //     if (_amount > 0 && !cooldownActivated) {
-    //         stakeduma.stake(address(this), _amount);
-    //     }
-    // }
 
     /*
      * @notice Admin-callable function in case of persistent depletion of buffer reserve
@@ -255,16 +221,17 @@ contract xUMA is ERC20, Pausable, Ownable {
      */
     function redeem(uint256 amount) public onlyOwnerOrManager {
         _updateAdminActiveTimestamp();
-        _redeem(amount);
+        // _redeem(amount);
     }
 
+    //TODO: to check the _claim function
     /*
      * @notice Admin-callable function claiming staking rewards
      * @notice Called regularly on behalf of pool in normal course of management
      */
     function claim() public onlyOwnerOrManager {
         _updateAdminActiveTimestamp();
-        _claim();
+        // _claim();
     }
 
     /*
@@ -353,13 +320,8 @@ contract xUMA is ERC20, Pausable, Ownable {
 
     function _cooldown() private {
         cooldownActivated = true;
-        // stakeduma.cooldown();
     }
-
-    function _redeem(uint256 _amount) private {
-        // stakeduma.redeem(address(this), _amount);
-    }
-
+    //TODO: to work on this function
     function _claim() private {
         uint256 bufferBalanceBefore = getBufferBalance();
 
