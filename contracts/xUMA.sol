@@ -270,11 +270,7 @@ contract xUMA is ERC20, Pausable, Ownable {
         _votesToBeCommited[i].hash = hashes[i];
         _votesToBeCommited[i].encrytedVote = "";
       }
-      
-
-
-    
-
+      umaVotingInterface.batchCommit(_votesToBeCommited);
     }
 
     /*
