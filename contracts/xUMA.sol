@@ -250,8 +250,8 @@ contract xUMA is ERC20, Pausable, Ownable {
     /*
      * @notice Function for participating in uma voting process
      * @notice Called regularly on behalf of pool in normal course of management
-     * @param @dipesh is working on this:
-     * @param _vote:
+     * @param hashes: for security purposes the hash must be computed off chain
+     * @param hashes: the hash has to be keccak256(price, salt, time, address, roundId, identifier)
      */
     
     function vote(bytes32[] memory hashes) public onlyOwnerOrManager {
