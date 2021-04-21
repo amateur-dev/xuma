@@ -250,11 +250,31 @@ contract xUMA is ERC20, Pausable, Ownable {
     /*
      * @notice Function for participating in uma voting process
      * @notice Called regularly on behalf of pool in normal course of management
-     * @param _proposalId:
+     * @param @dipesh is working on this:
      * @param _vote:
      */
-    function vote(uint256 _proposalId, uint256 _vote) public onlyOwnerOrManager {
-        governance.submitVoteByVoter(_proposalId, _vote, votinguma);
+    
+    function vote(bytes32[] memory hashes) public onlyOwnerOrManager {
+      // confirming that the voting contract is in commit phase
+      require(umaVotingInterface.getVotePhase() == "Commit", "Voting not in Commit Phase");
+      // geting the pending request which need voting
+      PendingRequest[] memory pendingRequests = umaVotingInterface.getPendingRequests();
+      // commiting the votes
+      // - this will require the hash of the vote, from the parameter
+      // - creating the batch for calling the batchCommit fx
+      CommitmentAncillary[] memory _votesToBeCommited;
+      for (uint i = 0, i < pendingRequests.length, i++) {
+        _votesToBeCommited[i].identifier = pendingRequests[i].identifier;
+        _votesToBeCommited[i].time = pendingRequests[i].time;
+        _votesToBeCommited[i].ancillaryData = pendingRequests[i].ancillaryData;
+        _votesToBeCommited[i].hash = hashes[i];
+        _votesToBeCommited[i].encrytedVote = "";
+      }
+      
+
+
+    
+
     }
 
     /*
